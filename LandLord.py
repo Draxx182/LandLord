@@ -239,7 +239,7 @@ def toExport(file_path): #Exports property.bin into directory and according json
 
     file.close() #Closes file path
 
-def toImport(file_path):
+def toImport(file_path): #Ignore this part for now
     wr = BinaryReader()
     wr.set_endian(True)
     importDict = import_json(file_path)
