@@ -54,16 +54,11 @@ def export_json(target_path, filename, data): #Writes a json to a certain direct
     jsonPath = target_path / (filename+ '.json')
     jsonPath.write_text(jsonFile)
 
-def import_json(target_path): #Goes through a directory, then loads json info into OrderedDict
-    folder = os.listdir(target_path)
-    #Get paths of all the jsons in a directory
-    all_json_files = [os.path.join(target_path, f) for f in folder if os.path.isfile(os.path.join(target_path, f)) and f.endswith(".json")]
-
-    #Iterate over json paths to load json data into a dict
-    for file_path in all_json_files:
-        with open(file_path) as input_file:
-            json_array = json.loads(input_file.read(), object_pairs_hook=OrderedDict)
-            return(json_array)
+def import_json(target_path, name): #Goes through a directory, then loads json info into OrderedDict
+    import_file = os.path.join(target_path+("//"+name+".json"))
+    with open(import_file) as input_file:
+        json_array = json.loads(input_file.read(), object_pairs_hook=OrderedDict)
+        return(json_array)
 
 def toExport(file_path): #Exports property.bin into directory and according jsons
     file = open(file_path, 'rb')
@@ -71,11 +66,11 @@ def toExport(file_path): #Exports property.bin into directory and according json
     wr = BinaryReader()
     rd.set_endian(True)
     wr.set_endian(True)
-    direct = write_dir(propertyFolder, '\\Table Data')
+    propertyFolder = write_dir(file_path, ' folder')
+    direct = write_dir(propertyFolder, '//Table Data')
 
     #Number of blocks in each table, plus it's starting pointers.
     rd.seek(40, whence=2)
-    endingOf = rd.pos()
     moveBlocks = rd.read_uint32(3) #Num of moveblocks, pointer to name table, pointer to data table
     gmtBlocks = rd.read_uint32(2) #Num of GMT files, pointer to start of GMT table
     mepBlocks = rd.read_uint32(2) #Num of MEP files, pointer to start of MEP table
@@ -152,7 +147,7 @@ def toExport(file_path): #Exports property.bin into directory and according json
                 moveDict[moveName]["Move Properties"]["Properties Table"][id]["Property Data"]["Unk 1"] = rd.read_uint8()
                 moveDict[moveName]["Move Properties"]["Properties Table"][id]["Property Data"]["Unk 2"] = rd.read_uint8()
 
-                rd.read_uint8() #Be not afraid
+                rd.read_uint8()
                 moveDict[moveName]["Move Properties"]["Properties Table"][id]["Property Data"]["Property Type ID"] = propertyIDType
                 moveDict[moveName]["Move Properties"]["Properties Table"][id]["Property Data"]["Unk Value"] = rd.read_uint32()
                 propertiesPointer = rd.read_uint32() #Pointer to where property id tables start at
@@ -169,13 +164,15 @@ def toExport(file_path): #Exports property.bin into directory and according json
                     for unk in range(11):
                         moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Unk "+str(unk)] = rd.read_uint16() #Is your figure less than greek?
                     rd.seek(propertiesTablePos)
-                elif (propertyIDType == 5 or 18): #Hitbox or Camera Property | ID 5 or 18
+                elif (propertyIDType == 5 or propertyIDType == 18): #Hitbox or Camera Property | ID 5 or 18
                     rd.seek(propertiesPointer + moveBlocksProperty)
                     #Guesses which property it is, assigns appropriate location
                     if (propertyIDType == 5):
                         hitboxStr = "Hitbox"
-                    else: #dumb.png
-                        hitboxStr = "Audio"
+                    elif (propertyIDType == 18): #dumb.png
+                        hitboxStr = "Camera"
+                    else:
+                        pass
                     moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr][hitboxStr+"Location1"] = rd.read_uint16()
                     moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr][hitboxStr+"Location2"] = rd.read_uint16()
                     #The Unks of the Hitbox and Camera property are in the same place
@@ -187,8 +184,6 @@ def toExport(file_path): #Exports property.bin into directory and according json
                     moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr]["Damage"] = rd.read_uint8()
                     moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr]["Heat"] = rd.read_uint8()
                     moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr]["Unk 4"] = rd.read_uint32()
-                    rd.seek(propertiesTablePos)
-                else:
                     rd.seek(propertiesTablePos)
     export_json(direct, "Move Block Data", moveDict) #Exports Move Table
 
@@ -220,42 +215,88 @@ def toExport(file_path): #Exports property.bin into directory and according json
         mepName = rd.read_str()
         stringDict["String "+str(mep)] =  mepName
         mepDict["MEP Block "+str(mep)] = mepName
-    endOf = rd.pos()
     export_json(direct, "MEP Block Data", mepDict) #Exports MEP Table
 
-    #Random Data idk
-    #If you're asking where the Unk and Data table are, screw you im not doing that yet.
-    read_til_end = endingOf - endOf
-    reading = rd.read_bytes(read_til_end)
-    writing = wr.write_bytes(reading)
-    with open(str(direct)+"\\Unknown Data.bin", "w") as f:
-        f.write(str(wr.buffer()))
+    #--Unknown Table--
+    unkDict = OrderedDict()
+    unkBlocksTable = unkBlocks[1]
+    #Goes through every Unk GMT block and makes a json
+    for uGMT in range(unkBlocks[0]):
+        rd.seek(unkBlocksTable)
+        unkBlocksName = rd.read_uint32()
+        unkBlocksTable = rd.pos()
+
+        rd.seek(unkBlocksName)
+        unkName = rd.read_str()
+        stringDict["String "+str(uGMT)] = unkName
+        unkDict["Unk Block "+str(uGMT)] = unkName
+    export_json(direct, "Unk Block Data", unkDict) #Exports Unk Table
+
+    #--Data of Unknown Table
+    dataDict = tree()
+    dataBlocksTable1 = unkBlocks[2]
+    #I honestly don't know anymore. 
+    for uDAT in range(unkBlocks[0]):
+        rd.seek(dataBlocksTable1)
+        dataBlocksName1 = rd.read_uint32() #Pointer to find the pointer of the name
+        dataBlocksTable1 = rd.pos() #Don't question the above
+
+        rd.seek(dataBlocksName1) #Going to find the actual name
+        numOfU = rd.read_uint32() #How many unk pointers there are in this block
+        locOfU = rd.read_uint32() #Points to location of unk pointer
+        dataBlocksName2 = rd.read_uint32() #Finally, the name pointer
+        dataBlocksTable2 = rd.pos()
+
+        rd.seek(dataBlocksName2)
+        dataName = rd.read_str() #Gets the name
+        rd.seek(dataBlocksTable2)
+        unknown1 = rd.read_uint32() #Unknown
+        unknown2 = rd.read_uint32() #Unknown
+
+        rd.seek(locOfU)
+        dataDict[str(uDAT)+" Data Block"]["Name"] = dataName
+        dataDict[str(uDAT)+" Data Block"]["Number of Tables"] = numOfU
+        #Loops through unk pointer blocks
+        for u in range(numOfU):
+            pointOfU = rd.read_uint32() #Pointer to table
+            dataBlocksTable3 = rd.pos()
+            rd.seek(pointOfU)
+            dataName2 = rd.read_uint32() #Name of the data table string
+            unkVal = rd.read_uint32()
+
+            rd.seek(dataName2)
+            dataString = rd.read_str()
+            rd.seek(dataBlocksTable3)
+            dataDict[str(uDAT)+" Data Block"]["Table "+str(u)]["Table Name"] = dataString
+            dataDict[str(uDAT)+" Data Block"]["Table "+str(u)]["Unk Value"] = unkVal
+        export_json(direct, "Unk-Data Blocks", dataDict) #Exports Data Table
 
     #--String Table--
     inverse_dict = OrderedDict((v,k) for k,v in stringDict.items()) #Inverses dict :troll:
     inversed_dict = OrderedDict((v,k) for k,v in inverse_dict.items()) #Inverses dict again :doubletroll:
-    #Basically removes duplicates from string table, it's also retarded that I have to do that.
+    #Basically removes duplicates from string table.
     export_json(direct, "String Data", inversed_dict) #Exports string table
 
     file.close() #Closes file path
 
-def toImport(file_path): #Ignore this part for now
+def toImport(file_path):
+    propertyTable = os.path.join(file_path +'//Table Data') #Path to table data folder
+    if file_path.endswith('folder'): #Cuts folder out of file_path
+        new_path = file_path[:-11]
+    file = open(propertyTable+"//Unknown Data.bin",'rb') #Sloppy way to do things, but it'll work for now.
+    #Binary Reader
     wr = BinaryReader()
+    rd = BinaryReader(file.read())
     wr.set_endian(True)
-    importDict = import_json(file_path)
-    importList = list(importDict.values())
-    if file_path.endswith('folder'):
-        file_path = file_path[:-11]
-    propertyBin = os.path.join(file_path + ' new')
+    rd.set_endian(True)
 
-    wr.write_uint32(importList[0])
-    wr.write_uint16(importList[1])
-    wr.write_uint16(importList[2])
-    wr.write_uint32(importList[3])
-    wr.write_uint32(0)
+    propertyFolder = write_dir(file_path, ' folder')
+    moveDict = import_json(propertyTable, "Move Block Data")
+    export_json(propertyFolder, "Move Block Data", moveDict)
 
-    with open(propertyBin+".bin", 'wb') as f:
+    with open(new_path+" new.bin", 'wb') as f:
         f.write(wr.buffer())
+    file.close()
     
 #Checks to make sure argument is set, then either imports a directory or exports property.bin
 if (len(sys.argv) <= 1):
@@ -263,7 +304,6 @@ if (len(sys.argv) <= 1):
 else:
     propertyPath = sys.argv[1]
     if (propertyPath.endswith(".bin")):
-        propertyFolder = write_dir(propertyPath, ' folder')
         toExport(propertyPath)
     else:
         toImport(propertyPath)
