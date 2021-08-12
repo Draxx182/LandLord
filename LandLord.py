@@ -22,10 +22,9 @@ gmtDict = dict()
 mepDict = dict()
 pointerDict = dict()
 #Reference
-moveDataDict = {"Unk 0": 32, "MEP Table ID": 1, "Unk 2": 32, "Unk 3": 32, "Unk 4p1": 16, "Unk 4p2": 16, "Unk 5 Bitfield": 32, "Unk 6": 32, "Unk 7": 32, "GMT Table ID": 2, "Unk 9": 32, "Unk 10": 32, "Unk 11p1": 16, "Unk 11p2": 16, "Ubyte Unk 1": 8, "Unk 12": 16, "Ubyte Unk 2": 8, "Unk 13": 32, "Unk 14": 32}
 moveIDDict = {1:"Hitbox Audio(?)",2:"Audio",3:"Follow Up Lock",4:"Control Lock",5:"Hitbox",6:"Pickup(?)",10:"Sync 1 Damage",11:"Invincibility",12:"Bullet Effect",13:"Dropdown(?)",15:"Camera Shake",16:"Controller Shake",18:"Camera",20:"Lock-on",26:"Hyper Armor Control",28:"Charge Attack Property",29:"Heat Control",30:"Heat Gain(?)"}
 moveTableDict = {"StartFrame":16,"EndFrame":16,"Modifier":8,"Unk 1":8,"Unk 2":8,"Property Type ID":1,"Unk Value":32}
-moveTableDataDict = {}
+hitboxDict = {"Location1":1,"Location2":1,"Unk 1":16,"Unk 2":8,"Unk 3":8,"Flags":16,"Damage":8,"Heat":8,"Unk 4":32}
 
 def tree(): #Makes a tree :troll:
     def the_tree():
@@ -87,7 +86,7 @@ else:
         stringNum = 0 #Incrementing number to name string
         while stringSet < moveBlocks[1]-2:
             stringNum += 1
-            stringDict["String "+str(stringNum)] = rd.read_str()
+            stringDict[stringNum] = rd.read_str()
             stringSet = rd.pos() #Updates string position
         print("String Data successfully exported")
 
@@ -126,8 +125,6 @@ else:
         moveBlocksData = moveBlocks[2] #Data Table
         moveIDDictV = list(moveIDDict.values())
         moveIDDictK = list(moveIDDict.keys())
-        moveDataDictI = moveDataDict.items()
-        moveTableDictI = moveTableDict.items()
 
         #Goes through every move block and makes a json
         for move in range(moveBlocks[0]):
@@ -145,25 +142,26 @@ else:
             rd.seek(moveData)
 
             #Goes to the data of move.
-            for key, value in moveDataDictI:
-                if (value == 32): #Reads 32 bytes if the value is 32
-                    moveDict[moveName]["Move Data"][key] = rd.read_uint32()
-                elif (value == 16): #Reads 16 bytes if the value is 16
-                    moveDict[moveName]["Move Data"][key] = rd.read_uint16()
-                elif (value == 8): #Reads 8 bytes if the value is 8
-                    moveDict[moveName]["Move Data"][key] = rd.read_uint8()
-                elif (value == 1): #MEP Table ID, finds string to write it to dict.
-                    mepIndex = rd.read_int32()
-                    if mepIndex in mepDict:
-                        moveDict[moveName]["Move Data"][key] = mepList[mepIndex]
-                    else:
-                        moveDict[moveName]["Move Data"][key] = ""
-                elif (value == 2): #GMT Table ID, finds string to write it to dict.
+            moveDict[moveName]["Move Data"]["Unk 0"] = rd.read_uint32()
+            mepIndex = rd.read_int32()
+            if (mepIndex != -1):
+                moveDict[moveName]["Move Data"]["MEP Table ID"] = mepList[mepIndex]
+            else:
+                moveDict[moveName]["Move Data"]["MEP Table ID"] = ""
+            #Pointers, recalculated on repack.
+            sizeOfMove = rd.read_uint32() #Size of the structure (Contains main data table)
+            rd.read_uint32() #Pointer to move properties start (Not needed for exporting)
+            sizeOfMove = int((sizeOfMove - 4)/4) #Makes sure it has the correct amount.
+
+            for tUnk in range(sizeOfMove):
+                if (tUnk == 4): #Checks if GMT Table ID
                     gmtIndex = rd.read_int32()
-                    if gmtIndex in gmtDict:
-                        moveDict[moveName]["Move Data"][key] = gmtList[gmtIndex]
+                    if (gmtIndex != -1):
+                        moveDict[moveName]["Move Data"]["GMT Table ID"] = gmtList[gmtIndex]
                     else:
-                        moveDict[moveName]["Move Data"][key] = ""
+                        moveDict[moveName]["Move Data"]["GMT Table ID"] = ""
+                else: #If not, label as unk
+                    moveDict[moveName]["Move Data"]["Unk "+str(tUnk+1)] = rd.read_uint32()
 
             #Move Properties
             moveBlocksProperty = rd.pos() #Start of the properties table
@@ -181,12 +179,13 @@ else:
 
                     if propertyIDType in moveIDDict: #Gets the correct string to assign to property.
                         idIndex = moveIDDictK.index(propertyIDType)
-                        id = ("Property 1| Type ID "+str(propertyIDType)+" = "+moveIDDictV[idIndex])
+                        id = ("Property "+str(property+1)+"| Type ID "+str(propertyIDType)+" = "+moveIDDictV[idIndex])
                     else:
-                        id = ("Property 1| Type ID "+str(propertyIDType))
+                        id = ("Property "+str(property+1)+"| Type ID "+str(propertyIDType))
 
                     #Reads the basic data of a property in a move
-                    for key, value in moveTableDictI:
+                    for key in moveTableDict:
+                        value = moveTableDict[key]
                         if (value == 32):
                             moveDict[moveName]["Move Properties"]["Properties Table"][id]["Property Data"][key] = rd.read_uint32()
                         elif (value == 16):
@@ -195,19 +194,19 @@ else:
                             moveDict[moveName]["Move Properties"]["Properties Table"][id]["Property Data"][key] = rd.read_uint8()
                         elif (value == 1):
                             rd.read_uint8()
-                            moveDict[moveName]["Move Properties"]["Properties Table"][id]["Property Data"]["StartFrame"] = propertyIDType
+                            moveDict[moveName]["Move Properties"]["Properties Table"][id]["Property Data"][key] = propertyIDType
                     propertiesPointer = rd.read_uint32() #Pointer to where property id tables start at
                     propertiesTablePos = rd.pos()
 
                     #Checks the PropertyID to see if it's a special ID
                     if (propertyIDType == 1): #Unknown Property | ID 1
                         rd.seek(propertiesPointer + moveBlocksProperty)
-                        for unk in range(11):
+                        for unk in range(10):
                             moveDict[moveName]["Move Properties"]["Properties Table"][id]["Unknown Property"]["Unk "+str(unk)] = rd.read_uint16()
                         rd.seek(propertiesTablePos)
                     elif (propertyIDType == 2): #Audio Property | ID 2
                         rd.seek(propertiesPointer + moveBlocksProperty)
-                        for unk in range(11):
+                        for unk in range(10):
                             moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Unk "+str(unk)] = rd.read_uint16() 
                         rd.seek(propertiesTablePos)
                     elif (propertyIDType == 5 or propertyIDType == 18): #Hitbox or Camera Property | ID 5 or 18
@@ -217,19 +216,16 @@ else:
                             hitboxStr = "Hitbox"
                         elif (propertyIDType == 18): #dumb.png
                             hitboxStr = "Camera"
-                        else:
-                            pass
-                        moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr][hitboxStr+"Location1"] = rd.read_uint16()
-                        moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr][hitboxStr+"Location2"] = rd.read_uint16()
-                        #The Unks of the Hitbox and Camera property are in the same place
-                        moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr]["Unk 1"] = rd.read_uint16()
-                        moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr]["Unk 2"] = rd.read_uint8()
-                        moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr]["Unk 3"] = rd.read_uint8()
-                        #And the modifiers of them too.
-                        moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr]["Flags"] = rd.read_uint16()
-                        moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr]["Damage"] = rd.read_uint8()
-                        moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr]["Heat"] = rd.read_uint8()
-                        moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr]["Unk 4"] = rd.read_uint32()
+                        for key in hitboxDict:
+                            value = hitboxDict[key]
+                            if (value == 32):
+                                moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr][key] = rd.read_uint32()
+                            elif (value == 16):
+                                moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr][key] = rd.read_uint16()
+                            elif (value == 8):
+                                moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr][key] = rd.read_uint8()
+                            elif (value == 1): #Hitbox string location
+                                moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr][hitboxStr+key] = rd.read_uint16()
                         rd.seek(propertiesTablePos)
         export_json(direct, "Move Block Data", moveDict) #Exports Move Table
         print("Move Block Data successfully exported")
@@ -251,7 +247,9 @@ else:
 
         #--Data of Unknown Table
         dataDict = tree()
+        tableList = []
         dataBlocksTable1 = unkBlocks[2]
+
         #I honestly don't know anymore. 
         for uDAT in range(unkBlocks[0]):
             rd.seek(dataBlocksTable1)
@@ -269,14 +267,17 @@ else:
             rd.seek(dataBlocksTable2)
             unknown1 = rd.read_uint32() #Unknown
             unknown2 = rd.read_uint32() #Unknown
+            rd.seek(unknown2)
 
             rd.seek(locOfU)
             dataDict[str(uDAT)+" Data Block"]["Name"] = dataName
             dataDict[str(uDAT)+" Data Block"]["Number of Tables"] = numOfU
-            dataDict[str(uDAT)+" Data Block"]["Unknown Value 1"] = unknown1
+            dataDict[str(uDAT)+" Data Block"]["Unk 1"] = unknown1
             #Loops through unk pointer blocks
             for u in range(numOfU):
                 pointOfU = rd.read_uint32() #Pointer to table
+                if (u == 0):
+                    tableList.append(pointOfU)
                 dataBlocksTable3 = rd.pos()
                 rd.seek(pointOfU)
                 dataName2 = rd.read_uint32() #Name of the data table string
@@ -287,7 +288,10 @@ else:
                 rd.seek(dataBlocksTable3)
                 dataDict[str(uDAT)+" Data Block"]["Table "+str(u)]["Table Name"] = dataString
                 dataDict[str(uDAT)+" Data Block"]["Table "+str(u)]["Unk Value"] = unkVal
-            export_json(direct, "Unk-Data Blocks", dataDict) #Exports Data Table
+
+        export_json(direct, "Unk-Data Blocks", dataDict) #Exports Data Table
+
+
         print("Unk-Data Blocks successfully exported")
         file.close()
         print("My program took", time.time() - start_time, "to run")
@@ -323,9 +327,6 @@ else:
         for value in stringDict.values():
             pointerDict[value] = wr.pos() #Switches string to key, then writes adds pointer location
             wr.write_str(value, null=True) #Writes string to bin
-        pointerName = dict()
-        pointers = list(pointerDict.values())
-        pointerNames = list(pointerDict.keys())
         wr.write_uint8(204)
 
         #--Move Name Table--
@@ -334,70 +335,78 @@ else:
         moveList = list(moveDict.items()) #Puts Dict in a list
         #Searches through every move block
         for key in moveDict:
-            moveIndex = pointerNames.index(key)
-            wr.write_uint32(pointers[moveIndex])
+            move = pointerDict[key]
+            wr.write_uint32(move)
 
         #--GMT Table--
         gmtDict = import_json(propertyTable, "GMT Block Data")
         gmtBlocks = [len(gmtDict), wr.pos()] #GMT table size, position at start of GMT table
         gmtName = dict()
-        for key in gmtDict: #Finds index of gmtDict, then writes appropriate pointer.
-            value = gmtDict[key]
-            index = pointerNames.index(value)
-            gmtName[value] = key
-            wr.write_uint32(pointers[index])
+        for index, value in enumerate(gmtDict.values()): #Finds index of gmtDict, then writes appropriate pointer.
+            gmtName[value] = index
+            gmt = pointerDict[value]
+            wr.write_uint32(gmt)
 
         #--MEP Table--
         mepDict = import_json(propertyTable, "MEP Block Data")
         mepBlocks = [len(mepDict), wr.pos()] #MEP table size, position at start of MEP table
         mepName = dict()
-        for key in gmtDict: #Finds index of mepDict, then writes appropriate pointer.
-            value = mepDict[key]
-            index = pointerNames.index(value)
-            mepName[value] = key #Switches key and value
-            wr.write_uint32(pointers[index])
+        for index, value in enumerate(mepDict.values()): #Finds index of mepDict, then writes appropriate pointer.
+            mepName[value] = index
+            mep = pointerDict[value]
+            wr.write_uint32(mep)
 
         #--Unk Pointer Table--
         unkDict = import_json(propertyTable, "Unk Block Data")
         unkBlocks = [len(unkDict), wr.pos(), 0] #Unk table size, position at start of Unk table
         unkName = list(unkDict.values()) #Gets the names from the Unk Dict
-        for value in gmtDict.values(): #Finds index of unkDict, then writes appropriate pointer.
-            index = pointerNames.index(value)
-            wr.write_uint32(pointers[index])
+        for value in unkDict.values(): #Finds index of unkDict, then writes appropriate pointer.
+            unk = pointerDict[value]
+            wr.write_uint32(unk)
 
         #--Unk Data Table--
         dataDict = import_json(propertyTable, "Unk-Data Blocks")
         dataList = list(dataDict.items()) #List of the Data Dict
         dataPointers = [] #Pointer for each data table made
+        startTable = []
+        namePointers = []
+        nameDict = dict()
 
         for data in range(unkBlocks[0]): #Note: This part of code is REALLY messy since I had to jump around a lot
             dataOfList = list(dataList[data][1].values()) #Data of the ordereddict inside
             numOfTables = dataOfList[1]
             tablePointers = [] #Pointers of data of tables
+
             #Loops through how many tables there are
             for table in range(numOfTables):
                 tableOfData = list(dataOfList[table+3].values()) #Gets data of each table ordereddict
-                tablePointers.append(wr.pos())
 
-                tableIndex = pointerNames.index(tableOfData[0]) #Finds index of the table name in pointers
-                wr.write_uint32(pointers[tableIndex]) #Writes Table Name
-                wr.write_uint32(tableOfData[1]) #Writes unk value
+                tableIndex = pointerDict[tableOfData[0]] #Finds index of the table name in pointers
+                if (table == 0 and data != 0):
+                    tablePointers.append(wr.pos())
+                else:
+                    tablePointers.append(wr.pos())
+                    wr.write_uint32(tableIndex) #Writes Table Name
+                    wr.write_uint32(tableOfData[1]) #Writes unk value
             #Writes the pointers of the tables at the end
             pointerToStart = wr.pos()
-            for point in range(len(tablePointers)):
-                wr.write_uint32(tablePointers[point])
+            for index, point in enumerate(tablePointers):
+                if (index == 0 and data != 0):
+                    wr.write_uint32(point-8)
+                else:
+                    wr.write_uint32(point)
             #Write the rest of the data
             dataPointers.append(wr.pos())
+            if (data == 0):
+                finalPointer1 = wr.pos()
             wr.write_uint32(numOfTables) #Writes number of tables to bin
             wr.write_uint32(pointerToStart) #Writes the start of the unk tables
-            startOfName = wr.pos() #Something to write the second unknown pointer with
-            try: #For some reason there's an unk table with no name, which is also causing me a lot of trouble
-                dataIndex = pointerNames.index(dataOfList[0]) #Finds index of the data name in pointers
-            except:
-                pass
-            wr.write_uint32(pointers[dataIndex]) #Writes pointer of the name
+            if (data == unkBlocks[0]-1): 
+                break
+            else:
+                dataIndex = pointerDict[dataOfList[0]]
+            wr.write_uint32(dataIndex) #Writes pointer of the name
             wr.write_uint32(dataOfList[2])
-            wr.write_uint32(startOfName)
 
         #--Unk Name Table--
         unkBlocks[2] = wr.pos()
@@ -406,43 +415,122 @@ else:
 
         #--Move Data Table--
         moveDataPointers = []
-        moveDataDictI = moveDataDict.items()
-        moveTableDictI = moveTableDict.items()
         for index1, move in enumerate(moveDict):
             moveStruct1 = list(moveList[index1][1].values())
             moveData = list(moveStruct1[0].values())
             moveTable = list(moveStruct1[1].values())
         
             moveDataPointers.append(wr.pos())
-            #--Actual Move Data--
-            for index2, (key, value) in enumerate(moveDataDictI):
-                if (value == 32):
-                    wr.write_uint32(moveData[index2])
-                elif (value == 16):
-                    wr.write_uint16(moveData[index2])
-                elif (value == 8):
-                    wr.write_uint8(moveData[index2])
-                elif (value == 1): #MEP Table
-                    if (moveData[index2] == ""):
+            #Move Data, imports from dict.
+            wr.write_uint32(moveData[0]) #First unk
+            if (moveData[1] == ""):
+                wr.write_int32(-1)
+            else: #Writes MEP Table ID
+                mepIndex = int(mepName[moveData[1]])
+                wr.write_int32(mepIndex)
+
+            sizeOfMove = (len(moveData) - 1) * 4 #Calculates how big a table is from the length of the move data
+            wr.write_uint32(sizeOfMove) 
+            tilPointer = sizeOfMove + 12 #Pointer will always be 12 more than size of table
+            wr.write_uint32(tilPointer)
+
+            for index2, value in enumerate(moveData[2::]):
+                if (index2 == 4):
+                    if (value == ""):
                         wr.write_int32(-1)
                     else:
-                        mepIndex = int(mepName[moveData[index2]])
-                        print(mepIndex)
-                        wr.write_int32(mepIndex)
-                elif (value == 2): #GMT Table
-                    if (moveData[index2] == ""):
-                        wr.write_int32(-1)
-                    else:
-                        gmtIndex = int(gmtName[moveData[index2]])
-                        print(gmtIndex)
+                        gmtIndex = int(gmtName[value])
                         wr.write_int32(gmtIndex)
-            #--Table Move Data--
+                else:
+                    wr.write_uint32(value)
+
+            #Move Properties
             moveBlocksProperty = wr.pos() #Start of the properties table
             wr.write_uint16(moveTable[0]) #Table Unk
             numOfProperties = moveTable[1]
             wr.write_uint16(numOfProperties)
             propertiesPointer = []
             propertyIDType = []
+            if (numOfProperties > 0):
+                moveStruct2 = list(moveTable[2].values()) #Dicts inside the properties table
+                for property in range(numOfProperties):
+                    moveStruct3 = list(moveStruct2[property].values()) #Every property, including it's data.
+                    moveProperties = list(moveStruct3[0].values())
+
+                    for index3, value in enumerate(moveTableDict.values()):
+                        if (value == 32):
+                            wr.write_uint32(moveProperties[index3])
+                        elif (value == 16):
+                            wr.write_uint16(moveProperties[index3])
+                        elif (value == 8):
+                            wr.write_uint8(moveProperties[index3])
+                        elif (value == 1): #Property ID Type
+                            propertyIDType.append(moveProperties[index3])
+                            wr.write_uint8(propertyIDType[property])
+
+                    propertiesPointer.append(wr.pos()) #Where the pointer is
+                    wr.write_uint32(0) #Placeholder for the table pointer
+                for index4, id in enumerate(propertyIDType):
+                    try: #Tests to see if there is a dropdown menu
+                        moveStruct3 = list(moveStruct2[index4].values()) #Every property, including it's data.
+                        moveIDs = list(moveStruct3[1].values())
+                    except: #If not, then skips to next move property.
+                        pass
+                    pointerStart = wr.pos()
+                    pointerPosition = pointerStart - moveBlocksProperty
+                    if (id == 1): #Hitbox Audio
+                        for unk in moveIDs:
+                            wr.write_uint16(unk)
+                        idPosition = wr.pos() 
+                        wr.seek(propertiesPointer[index4])
+                        wr.write_uint32(pointerPosition) #Writes how far the pointer is
+                        wr.seek(idPosition)
+                    elif (id == 2): #Audio
+                        for unk in moveIDs:
+                            wr.write_uint16(unk)
+                        idPosition = wr.pos()
+                        wr.seek(propertiesPointer[index4])
+                        wr.write_uint32(pointerPosition)
+                        wr.seek(idPosition)
+                    elif (id == 5 or id == 18): #Hitbox/Camera
+                        for indexHit, key in enumerate(hitboxDict):
+                            value = hitboxDict[key]
+                            if (value == 32):
+                                wr.write_uint32(moveIDs[indexHit])
+                            elif (value == 16):
+                                wr.write_uint16(moveIDs[indexHit])
+                            elif (value == 8):
+                                wr.write_uint8(moveIDs[indexHit])
+                            elif (value == 1): #Hitboxlocations
+                                wr.write_uint16(moveIDs[indexHit])
+                        idPosition = wr.pos() 
+                        wr.seek(propertiesPointer[index4])
+                        wr.write_uint32(pointerPosition)
+                        wr.seek(idPosition)
+
+        #--Move Data Pointers--
+        moveBlocks[2] = wr.pos()
+        for pointer in moveDataPointers:
+            wr.write_uint32(pointer)
+
+        #--Final Pointers-- I promise I'll polish this in later revisions
+        #Move block pointers
+        wr.write_uint32(moveBlocks[0])
+        wr.write_uint32(moveBlocks[1])
+        wr.write_uint32(moveBlocks[2])
+        #Gmt block pointers
+        wr.write_uint32(gmtBlocks[0])
+        wr.write_uint32(gmtBlocks[1])
+        #Mep block pointers
+        wr.write_uint32(mepBlocks[0])
+        wr.write_uint32(mepBlocks[1])
+        #Unk block pointers
+        wr.write_uint32(unkBlocks[0])
+        wr.write_uint32(unkBlocks[1])
+        wr.write_uint32(unkBlocks[2])
+        #Filesize
+        wr.seek(filesize)
+        wr.write_uint32(wr.size())
 
         if propertyPath.endswith('folder'): #Cuts folder out of file_path
             new_path = propertyPath[:-11]
