@@ -13,7 +13,6 @@ import time
 from pathlib import Path
 from collections import defaultdict
 from binary_reader import BinaryReader
-start_time = time.time()
 
 #Dicts
 headerDict = dict()
@@ -23,7 +22,7 @@ mepDict = dict()
 pointerDict = dict()
 #Reference
 moveIDDict = {1:"Hitbox Audio(?)",2:"Audio",3:"Follow Up Lock",4:"Control Lock",5:"Hitbox",6:"Pickup(?)",10:"Sync 1 Damage",11:"Invincibility",12:"Bullet Effect",13:"Dropdown(?)",15:"Camera Shake",16:"Controller Shake",18:"Camera",20:"Lock-on",26:"Hyper Armor Control",28:"Charge Attack Property",29:"Heat Control",30:"Heat Gain(?)"}
-moveTableDict = {"StartFrame":16,"EndFrame":16,"Modifier":8,"Unk 1":8,"Unk 2":8,"Property Type ID":1,"Unk Value":32}
+moveTableDict = {"StartFrame":16,"EndFrame":16,"Modifier":8,"Unk 1":2,"Unk 2":8,"Property Type ID":1,"Unk Value":32}
 hitboxDict = {"Location1":1,"Location2":1,"Unk 1":16,"Unk 2":8,"Unk 3":8,"Flags":16,"Damage":8,"Heat":8,"Unk 4":32}
 
 def tree(): #Makes a tree :troll:
@@ -85,9 +84,13 @@ else:
         stringSet = 0 #Checker to see position
         stringNum = 0 #Incrementing number to name string
         while stringSet < moveBlocks[1]-2:
-            stringNum += 1
-            stringDict[stringNum] = rd.read_str()
-            stringSet = rd.pos() #Updates string position
+            try:
+                stringNum += 1
+                stringDict[stringNum] = rd.read_str()
+                stringSet = rd.pos() #Updates string position
+            except:
+                stringSet = moveBlocks[1]
+        export_json(direct, "String Data", stringDict) #Exports GMT Table
         print("String Data successfully exported")
 
         #--GMT Table--
@@ -167,7 +170,6 @@ else:
             moveBlocksProperty = rd.pos() #Start of the properties table
             moveDict[moveName]["Move Properties"]["Property Unk"] = rd.read_uint16()
             numOfProperties = rd.read_uint16()
-            moveDict[moveName]["Move Properties"]["Number of Properties"] = numOfProperties
             if (numOfProperties > 0):
                 for property in range(numOfProperties): #I know, this is not pretty coding. 
                     #Will polish things later. Gets Property ID Before scanning, basically.
@@ -195,11 +197,19 @@ else:
                         elif (value == 1):
                             rd.read_uint8()
                             moveDict[moveName]["Move Properties"]["Properties Table"][id]["Property Data"][key] = propertyIDType
+                        elif (value == 2):
+                            unkw1 = rd.read_uint8()
+                            moveDict[moveName]["Move Properties"]["Properties Table"][id]["Property Data"][key] = unkw1
                     propertiesPointer = rd.read_uint32() #Pointer to where property id tables start at
                     propertiesTablePos = rd.pos()
 
                     #Checks the PropertyID to see if it's a special ID
-                    if (propertyIDType == 1): #Unknown Property | ID 1
+                    if (propertyIDType == 0): #Unknown Property | ID 0
+                        rd.seek(propertiesPointer + moveBlocksProperty)
+                        for unk in range(5):
+                            moveDict[moveName]["Move Properties"]["Properties Table"][id]["Property 0 Unks"]["Unk "+str(unk)] = rd.read_int32()
+                        rd.seek(propertiesTablePos)
+                    elif (propertyIDType == 1): #Unknown Property | ID 1
                         rd.seek(propertiesPointer + moveBlocksProperty)
                         for unk in range(10):
                             moveDict[moveName]["Move Properties"]["Properties Table"][id]["Unknown Property"]["Unk "+str(unk)] = rd.read_uint16()
@@ -209,13 +219,24 @@ else:
                         for unk in range(10):
                             moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Unk "+str(unk)] = rd.read_uint16() 
                         rd.seek(propertiesTablePos)
-                    elif (propertyIDType == 5 or propertyIDType == 18): #Hitbox or Camera Property | ID 5 or 18
+                    elif (propertyIDType == 3): #Control Lock Property | ID 3
+                        if (propertiesPointer == 0):
+                            moveDict[moveName]["Move Properties"]["Properties Table"][id]["Follow Up Unks"]["Follow Up Type:"] = 0
+                            continue
+                        rd.seek(propertiesPointer + moveBlocksProperty)
+                        if (unkw1 == 0):
+                            moveDict[moveName]["Move Properties"]["Properties Table"][id]["Follow Up Unks"]["Follow Up Type:"] = 1
+                            for unk in range(5):
+                                moveDict[moveName]["Move Properties"]["Properties Table"][id]["Follow Up Unks"]["Unk "+str(unk)] = rd.read_int32()
+                        else:
+                            moveDict[moveName]["Move Properties"]["Properties Table"][id]["Follow Up Unks"]["Follow Up Type:"] = 2
+                            for unk in range(10):
+                                moveDict[moveName]["Move Properties"]["Properties Table"][id]["Follow Up Unks"]["Unk "+str(unk)] = rd.read_int32()
+                        rd.seek(propertiesTablePos)
+                    elif (propertyIDType == 5): #Hitbox | ID 5
                         rd.seek(propertiesPointer + moveBlocksProperty)
                         #Guesses which property it is, assigns appropriate location
-                        if (propertyIDType == 5):
-                            hitboxStr = "Hitbox"
-                        elif (propertyIDType == 18): #dumb.png
-                            hitboxStr = "Camera"
+                        hitboxStr = "Hitbox"
                         for key in hitboxDict:
                             value = hitboxDict[key]
                             if (value == 32):
@@ -288,13 +309,10 @@ else:
                 rd.seek(dataBlocksTable3)
                 dataDict[str(uDAT)+" Data Block"]["Table "+str(u)]["Table Name"] = dataString
                 dataDict[str(uDAT)+" Data Block"]["Table "+str(u)]["Unk Value"] = unkVal
-
         export_json(direct, "Unk-Data Blocks", dataDict) #Exports Data Table
-
-
         print("Unk-Data Blocks successfully exported")
+
         file.close()
-        print("My program took", time.time() - start_time, "to run")
     else:
         propertyTable = os.path.join(propertyPath +'//Table Data') #Path to table data folder
         #Binary Reader
@@ -327,7 +345,10 @@ else:
         for value in stringDict.values():
             pointerDict[value] = wr.pos() #Switches string to key, then writes adds pointer location
             wr.write_str(value, null=True) #Writes string to bin
-        wr.write_uint8(204)
+        ccByte = wr.pos() % 4
+        for item in range(4-ccByte):
+            wr.write_uint8(204)
+        print("String Data successfully repacked")
 
         #--Move Name Table--
         moveDict = import_json(propertyTable, "Move Block Data")
@@ -346,6 +367,7 @@ else:
             gmtName[value] = index
             gmt = pointerDict[value]
             wr.write_uint32(gmt)
+        print("GMT Block Data successfully repacked")
 
         #--MEP Table--
         mepDict = import_json(propertyTable, "MEP Block Data")
@@ -355,6 +377,7 @@ else:
             mepName[value] = index
             mep = pointerDict[value]
             wr.write_uint32(mep)
+        print("MEP Block Data successfully repacked")
 
         #--Unk Pointer Table--
         unkDict = import_json(propertyTable, "Unk Block Data")
@@ -363,6 +386,7 @@ else:
         for value in unkDict.values(): #Finds index of unkDict, then writes appropriate pointer.
             unk = pointerDict[value]
             wr.write_uint32(unk)
+        print("Unk Block Data successfully repacked")
 
         #--Unk Data Table--
         dataDict = import_json(propertyTable, "Unk-Data Blocks")
@@ -412,6 +436,7 @@ else:
         unkBlocks[2] = wr.pos()
         for name in range(unkBlocks[0]):
             wr.write_uint32(dataPointers[name])
+        print("Unk-Data Blocks successfully repacked")
 
         #--Move Data Table--
         moveDataPointers = []
@@ -447,12 +472,15 @@ else:
             #Move Properties
             moveBlocksProperty = wr.pos() #Start of the properties table
             wr.write_uint16(moveTable[0]) #Table Unk
-            numOfProperties = moveTable[1]
+            try:
+                moveStruct2 = list(moveTable[1].values()) #Dicts inside the properties table
+                numOfProperties = len(moveStruct2)
+            except:
+                numOfProperties = 0
             wr.write_uint16(numOfProperties)
             propertiesPointer = []
             propertyIDType = []
             if (numOfProperties > 0):
-                moveStruct2 = list(moveTable[2].values()) #Dicts inside the properties table
                 for property in range(numOfProperties):
                     moveStruct3 = list(moveStruct2[property].values()) #Every property, including it's data.
                     moveProperties = list(moveStruct3[0].values())
@@ -467,6 +495,8 @@ else:
                         elif (value == 1): #Property ID Type
                             propertyIDType.append(moveProperties[index3])
                             wr.write_uint8(propertyIDType[property])
+                        elif (value == 2):
+                            wr.write_uint8(moveProperties[index3])
 
                     propertiesPointer.append(wr.pos()) #Where the pointer is
                     wr.write_uint32(0) #Placeholder for the table pointer
@@ -492,7 +522,7 @@ else:
                         wr.seek(propertiesPointer[index4])
                         wr.write_uint32(pointerPosition)
                         wr.seek(idPosition)
-                    elif (id == 5 or id == 18): #Hitbox/Camera
+                    elif (id == 5): #Hitbox
                         for indexHit, key in enumerate(hitboxDict):
                             value = hitboxDict[key]
                             if (value == 32):
@@ -512,6 +542,7 @@ else:
         moveBlocks[2] = wr.pos()
         for pointer in moveDataPointers:
             wr.write_uint32(pointer)
+        print("Move Block Data successfully repacked")
 
         #--Final Pointers-- I promise I'll polish this in later revisions
         #Move block pointers
@@ -531,9 +562,13 @@ else:
         #Filesize
         wr.seek(filesize)
         wr.write_uint32(wr.size())
+        print("File successfully repacked")
 
         if propertyPath.endswith('folder'): #Cuts folder out of file_path
             new_path = propertyPath[:-11]
-        with open(new_path+" new.bin", 'wb') as f:
-            f.write(wr.buffer())
-        print("My program took", time.time() - start_time, "to run")
+            with open(new_path+" new.bin", 'wb') as f:
+                f.write(wr.buffer())
+        else:
+            with open(propertyPath+".bin", 'wb') as f:
+                f.write(wr.buffer())
+            new_path = propertyPath
