@@ -14,5 +14,7 @@ Once Exe has been created, it may come up as malware by windows defender. I assu
 
 # Credit
 A massive thank you to HeartlessSeph who found out the pointers for property.bin. Thanks to Retraso for providing some base code. Sutando for providing me with the PyBinaryReader.
+A thank you to Spoon722, musashi man, kuandik and Emerge for testing out the property.bin.
+Thank you to you for checking this tool out. I hope you enjoy.
 
-Without these guys, this project would've been a lot harder and more time consuming.
+Without you, this project would've been worthless.
