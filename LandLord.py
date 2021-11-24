@@ -21,7 +21,8 @@ gmtDict = dict()
 mepDict = dict()
 pointerDict = dict()
 #Reference
-moveIDDict = {1:"Hitbox Audio(?)",2:"Audio",3:"Follow Up Lock",4:"Control Lock",5:"Hitbox",6:"Pickup(?)",10:"Sync 1 Damage",11:"Invincibility",12:"Bullet Effect",13:"Dropdown(?)",15:"Camera Shake",16:"Controller Shake",18:"Camera",20:"Lock-on",26:"Hyper Armor Control",28:"Charge Attack Property",29:"Heat Control",30:"Heat Gain(?)"}
+moveIDDictNew = {1:"Hitbox Audio(?)",2:"Audio",3:"Follow Up Lock",4:"Control Lock",5:"Hitbox",6:"Pickup(?)",10:"Sync 1 Damage",11:"Invincibility",12:"Bullet Effect",13:"Dropdown(?)",15:"Camera Shake",16:"Controller Shake",18:"Camera",20:"Lock-on",26:"Hyper Armor Control",28:"Charge Attack Property",29:"Heat Control",30:"Heat Gain(?)"}
+moveIDDictOld = {1:"Character Audio", 2: "Audio", 3:"Follow Up Lock",4:"Control Lock", 5:"Hitbox",17:"Recovery",18:"Camera Shake",30:"Hyper Armor Control"}
 moveTableDict = {"StartFrame":16,"EndFrame":16,"Modifier":8,"Unk 1":8,"Unk 2":8,"Property Type ID":1,"Unk Value":32}
 hitboxDictNew = {"Location1":1,"Location2":1,"Unk 1":16,"Unk 2":8,"Unk 3":8,"Flags":16,"Damage":8,"Heat":8,"Unk 4":32}
 hitboxDictOld = {"Location1":1,"Location2":1,"Filler 1": 0, "Filler 2": 0, "Filler 3": 0, "Flags":16,"Damage":8,"Heat":8, "Filler 4": 0}
@@ -83,7 +84,9 @@ else:
         file = open(propertyPath, 'rb')
         rd = BinaryReader(file.read())
         rd.set_endian(True)
-        new_path = Path(propertyPath[:-13])
+        new_path = Path(os.path.dirname(propertyPath))
+        nameOfFile = os.path.basename(os.path.normpath(propertyPath))
+        nameOfFile = nameOfFile[:-4]
         
         #--Header--
         rd.read_bytes(6)
@@ -92,16 +95,18 @@ else:
         rd.read_uint32()
 
         #--Effects Strings--
+        effectDict = tree()
+        actionDict["Effects Table"]
+        effectsIncrement = 0
         while True:
+            effectsIncrement += 1
             string = rd.read_str()
-            actionDict["Effects Table"][string]["Unk"]
+            effectDict[effectsIncrement]["String"] = string
 
             fillerByte = rd.read_uint8()
             rd.seek(rd.pos()-1) #Reads next byte to see if it's a CC or Y byte
             if (fillerByte == 255 or fillerByte == 204):
                 break
-        effectDict = list(actionDict.values())[1]
-        effectNames = effectDict.keys()
 
         while True: #Skips all CC or Y bytes
             nullByte = rd.read_uint8()
@@ -132,13 +137,15 @@ else:
                 break
         
         #--Effects Data--
-        for effect in effectNames:
-            actionDict["Effects Table"][effect]["Unk"] = rd.read_uint16() 
+        effectsIncrement = 0
+        for effect in effectDict:
+            effectsIncrement += 1
+            effectDict[effectsIncrement]["Unk"] = rd.read_uint16() 
 
         #--Move Table--
         moveIncrement = 0
         while True: #Reads all move strings
-            actionDict["Move Table"]["Move "+str(moveIncrement)]["Move String"] = rd.read_str()
+            moveDict["Move Table"][moveIncrement]["Move String"] = rd.read_str()
             moveIncrement += 1
             fillerByte = rd.read_uint8()
             rd.seek(rd.pos()-1)
@@ -151,23 +158,109 @@ else:
                 rd.read_uint8()
             else:
                 break
+
+        moveName = list(moveDict["Move Table"][0].values())
         for move in range(moveIncrement): #Searches through dictionary to point at a certain string
+            moveName = list(moveDict["Move Table"][move].values())
             try:
                 btlString = rd.read_uint16()
-                actionDict["Move Table"]["Move "+str(move)]["Battle String"] = btlNames[btlString]
+                moveDict["Move Table"][move]["Battle String"] = btlNames[btlString]
             except:
                 break
         
-        #--Effects Data--
-        for effect in effectNames: #This is a mess, but it points all data to a move.
-            effectUnk = actionDict["Effects Table"][effect]["Unk"]
-            actionDict["Effects Table"][effect]["Unk"] = actionDict["Move Table"]["Move "+str(effectUnk-1)]["Move String"]
-
-        export_json(new_path, "ActionSet", actionDict) #Exports actionset.cas
+        dataIncrement = 0
+        for effect in range(len(effectDict)):
+            effectString = effectDict[effect+1]["String"]
+            effect1Unk = effectDict[effect+1]["Unk"]
+            while dataIncrement != effect1Unk:
+                moveString = moveDict["Move Table"][dataIncrement]["Move String"]
+                battleString = moveDict["Move Table"][dataIncrement]["Battle String"]
+                actionDict["Effects Table"][effectString][battleString] = moveString
+                dataIncrement += 1
+        export_json(new_path, nameOfFile, actionDict) #Exports actionset.cas
         file.close()
     elif (propertyPath.endswith(".json")):
-        actionDict = import_json(propertyPath, "ActionSet")
+        file = open(propertyPath, 'rb')
+        actionDict = json.loads(file.read())
+        wr = BinaryReader(file.read())
+        wr.set_endian(True)
+
+        #--Header--
+        actionDict = list(actionDict.values())
+        wr.write_uint32(1128354644)
+        wr.write_uint16(513)
+        headerDict = list(actionDict[0].values())
+        wr.write_uint16(headerDict[0])
+        wr.write_uint32(headerDict[1])
+        wr.write_uint32(0)
+
+        #--Effects Strings--
+        effectDict = list(actionDict[1].keys())
+        for key in effectDict:
+            wr.write_str(key, null=True) #Writes string to bin
+        wr.write_uint8(255) #String table always nulled by 255 byte
+        ccByte = wr.pos() % 2
+        if (ccByte != 0): #Checks to see if bytes already aligned, else writes CC byte
+            for item in range(2-ccByte):
+                wr.write_uint8(204)
         
+        #--Battle Strings--
+        btlDict = list(actionDict[2].values())
+        btlName = dict()
+        for index, value in enumerate(btlDict):
+            btlName[value] = index
+            wr.write_str(value, null=True) #Writes string to bin
+        wr.write_uint8(255) #String table always nulled by 255 byte
+        ccByte = wr.pos() % 2
+        if (ccByte != 0): #Checks to see if bytes already aligned, else writes CC byte
+            for item in range(2-ccByte):
+                wr.write_uint8(204)
+        eDataPointer = wr.pos()
+
+        #--Effects Data Placeholder--
+        for value in range(len(effectDict)):
+            wr.write_uint16(0)
+
+        #--Move Strings--
+        moveDict = list(actionDict[1].values())
+        moveSets = list()
+        moveName = dict()
+        dataIncrement = 0
+        for value in moveDict:
+            moveList = list(value.values())
+            for move in moveList:
+                dataIncrement += 1
+                wr.write_str(move, null=True) #Writes string to bin
+            moveSets.append(dataIncrement)
+        wr.write_uint8(255) #String table always nulled by 255 byte
+        wr.write_uint8(255)
+        ccByte = wr.pos() % 2
+        if (ccByte != 0): #Checks to see if bytes already aligned, else writes CC byte
+            for item in range(2-ccByte):
+                wr.write_uint8(204)
+        mDataPointer = wr.pos()
+        wr.seek(eDataPointer)
+
+        #--Effects Data--
+        effectDict = list(actionDict[1].values())
+        for value in moveSets:
+            wr.write_uint16(value)
+        wr.seek(mDataPointer)
+
+        #--Move Data--
+        for value in moveDict:
+            for move in value:
+                wr.write_uint16(btlName[move])
+
+        if propertyPath.endswith('.json'): #Cuts .json out of file_path
+            new_path = propertyPath[:-5]
+            with open(new_path+" new.cas", 'wb') as f:
+                f.write(wr.buffer())
+        else:
+            with open(propertyPath+".cas", 'wb') as f:
+                f.write(wr.buffer())
+            new_path = propertyPath
+        file.close()
     elif (propertyPath.endswith(".bin")):
         #Asks which game the user is on
         print("Which Property.bin Game are you exporting from?")
@@ -256,6 +349,10 @@ else:
         print("MEP Block Data successfully exported")
 
         #--Move Blocks--
+        if (gameTypeInt == 0):
+            moveIDDict = moveIDDictNew
+        else:
+            moveIDDict = moveIDDictOld
         moveBlocksName = moveBlocks[1] #Name Table
         moveBlocksData = moveBlocks[2] #Data Table
         moveIDDictV = list(moveIDDict.values())
@@ -623,7 +720,7 @@ else:
                             wr.write_int32(-1)
                         else:
                             gmtIndex = int(gmtName[value])
-                            wr.write_int32(gmtIndex+1)
+                            wr.write_int32(gmtIndex)
                     else:
                         wr.write_uint32(value)
                 elif (gameTypeInt == 1): #Spaghetti code, go fuck yourself
@@ -645,7 +742,7 @@ else:
                 numOfProperties = 0
             if (gameTypeInt == 0):
                 wr.write_uint16(moveTable[0]) #Table Unk
-                wr.write_uint16(moveTable[0]) #Number of properties.
+                wr.write_uint16(numOfProperties) #Number of properties.
             elif (gameTypeInt == 1):
                 wr.write_uint32(numOfProperties) #Number of properties.
             propertiesPointer = []
