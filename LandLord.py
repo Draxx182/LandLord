@@ -5,6 +5,7 @@ SutandoTsukai181 for his Binary Reader and
 Retraso for some of his base code
 '''
 #Imports
+import math
 import json
 import sys
 import os
@@ -24,8 +25,8 @@ pointerDict = dict()
 moveIDDictNew = {1:"Hitbox Audio(?)",2:"Audio",3:"Follow Up Lock",4:"Control Lock",5:"Hitbox",6:"Pickup(?)",10:"Sync 1 Damage",11:"Invincibility",12:"Bullet Effect",13:"Dropdown(?)",15:"Camera Shake",16:"Controller Shake",18:"Camera",20:"Lock-on",26:"Hyper Armor Control",28:"Charge Attack Property",29:"Heat Control",30:"Heat Gain(?)"}
 moveIDDictOld = {1:"Character Audio", 2: "Audio", 3:"Follow Up Lock",4:"Control Lock", 5:"Hitbox",17:"Recovery",18:"Camera Shake",30:"Hyper Armor Control"}
 moveTableDict = {"StartFrame":16,"EndFrame":16,"Modifier":8,"Unk 1":8,"Unk 2":8,"Property Type ID":1,"Unk Value":32}
-hitboxDictNew = {"Location1":1,"Location2":1,"Unk 1":16,"Unk 2":8,"Unk 3":8,"Flags":16,"Damage":8,"Heat":8,"Unk 4":32}
-hitboxDictOld = {"Location1":1,"Location2":1,"Filler 1": 0, "Filler 2": 0, "Filler 3": 0, "Flags":16,"Damage":8,"Heat":8, "Filler 4": 0}
+hitboxDictNew = {"Location1":1,"Location2":1,"Hit Effect":16,"Hit Strength":8,"Hit Location":8,"Flags":16,"Damage":8,"Heat":8,"Hit Value":32}
+hitboxDictOld = {"Location1":1,"Location2":1,"Flags":116,"Damage":8,"Heat":8}
 
 def tree(): #Makes a tree :troll:
     def the_tree():
@@ -52,6 +53,7 @@ def import_json(target_path, name): #Goes through a directory, then loads json i
     with open(import_file) as input_file:
         json_array = json.loads(input_file.read())
         return(json_array)
+
 
 #Checks to make sure argument is set, then either imports a directory or exports property.bin
 if (len(sys.argv) <= 1):
@@ -89,14 +91,15 @@ else:
         nameOfFile = nameOfFile[:-4]
         
         #--Header--
-        rd.read_bytes(6)
-        actionDict["FileHeader"]["Unk"] = rd.read_uint16()
+        actionDict["FileHeader"]["Magic"] = rd.read_str(4)
+        actionDict["FileHeader"]["Endianess"] = rd.read_uint16()
+        actionDict["FileHeader"]["Unk1"] = rd.read_uint16()
         actionDict["FileHeader"]["File Version"] = rd.read_uint32()
-        rd.read_uint32()
+        actionDict["FileHeader"]["Unk2"] = rd.read_uint32()
 
         #--Effects Strings--
         effectDict = tree()
-        actionDict["Effects Table"]
+        actionDict["Main Table"]
         effectsIncrement = 0
         while True:
             effectsIncrement += 1
@@ -117,7 +120,7 @@ else:
                 break
 
         #--Battle Strings--
-        battleIncrement = 0 #Adds some flair
+        battleIncrement = 0
         while True:
             string = rd.read_str()
             actionDict["Battle Table"]["String "+str(battleIncrement)] = string
@@ -172,10 +175,14 @@ else:
         for effect in range(len(effectDict)):
             effectString = effectDict[effect+1]["String"]
             effect1Unk = effectDict[effect+1]["Unk"]
-            while dataIncrement != effect1Unk:
+            newMoveIncrement = 0
+            if (dataIncrement == effect1Unk):
+                actionDict["Main Table"][effectString] = None
+            while dataIncrement < effect1Unk:
                 moveString = moveDict["Move Table"][dataIncrement]["Move String"]
                 battleString = moveDict["Move Table"][dataIncrement]["Battle String"]
-                actionDict["Effects Table"][effectString][battleString] = moveString
+                actionDict["Main Table"][effectString][newMoveIncrement][battleString] = moveString
+                newMoveIncrement += 1
                 dataIncrement += 1
         export_json(new_path, nameOfFile, actionDict) #Exports actionset.cas
         file.close()
@@ -187,23 +194,28 @@ else:
 
         #--Header--
         actionDict = list(actionDict.values())
-        wr.write_uint32(1128354644)
-        wr.write_uint16(513)
         headerDict = list(actionDict[0].values())
-        wr.write_uint16(headerDict[0])
-        wr.write_uint32(headerDict[1])
-        wr.write_uint32(0)
+        wr.write_str(headerDict[0])
+        wr.write_uint16(headerDict[1])
+        wr.write_uint16(headerDict[2])
+        wr.write_uint32(headerDict[3])
+        wr.write_uint32(headerDict[4])
 
         #--Effects Strings--
         effectDict = list(actionDict[1].keys())
-        for key in effectDict:
-            wr.write_str(key, null=True) #Writes string to bin
+        for item in effectDict:
+            wr.write_str(item, null=True)
+            '''
+            writeEffect = list(item.values())
+            for effect in writeEffect:
+                wr.write_str(list(effect.values())[0], null=True) #Writes string to bin
+            '''
         wr.write_uint8(255) #String table always nulled by 255 byte
         ccByte = wr.pos() % 2
         if (ccByte != 0): #Checks to see if bytes already aligned, else writes CC byte
             for item in range(2-ccByte):
-                wr.write_uint8(204)
-        
+                wr.write_uint8(255)
+
         #--Battle Strings--
         btlDict = list(actionDict[2].values())
         btlName = dict()
@@ -214,7 +226,7 @@ else:
         ccByte = wr.pos() % 2
         if (ccByte != 0): #Checks to see if bytes already aligned, else writes CC byte
             for item in range(2-ccByte):
-                wr.write_uint8(204)
+                wr.write_uint8(255)
         eDataPointer = wr.pos()
 
         #--Effects Data Placeholder--
@@ -224,23 +236,25 @@ else:
         #--Move Strings--
         moveDict = list(actionDict[1].values())
         moveSets = list()
-        moveName = dict()
         dataIncrement = 0
         for value in moveDict:
-            moveList = list(value.values())
-            for move in moveList:
+            if (value is None):
+                moveSets.append(dataIncrement)
+                continue
+            writeEffect = list(value.values())
+            for effect in writeEffect:
+                wr.write_str(list(effect.values())[0], null=True) #Writes string to bin
                 dataIncrement += 1
-                wr.write_str(move, null=True) #Writes string to bin
             moveSets.append(dataIncrement)
         wr.write_uint8(255) #String table always nulled by 255 byte
-        wr.write_uint8(255)
         ccByte = wr.pos() % 2
-        if (ccByte != 0): #Checks to see if bytes already aligned, else writes CC byte
+        if (ccByte != 0): #Checks to see if bytes already aligned, else writes FF byte
             for item in range(2-ccByte):
-                wr.write_uint8(204)
+                wr.write_uint8(255)
         mDataPointer = wr.pos()
         wr.seek(eDataPointer)
 
+        
         #--Effects Data--
         effectDict = list(actionDict[1].values())
         for value in moveSets:
@@ -249,8 +263,12 @@ else:
 
         #--Move Data--
         for value in moveDict:
-            for move in value:
-                wr.write_uint16(btlName[move])
+            if (value is None):
+                continue
+            valueList = list(value.values())
+            for move in valueList:
+                btlString = list(move.keys())[0]
+                wr.write_uint16(btlName[btlString])
 
         if propertyPath.endswith('.json'): #Cuts .json out of file_path
             new_path = propertyPath[:-5]
@@ -397,15 +415,28 @@ else:
                 sizeOfMove = int((sizeOfMove - 16)/2) #Makes sure it has the correct amount.
 
             if (gameTypeInt == 0):
+                gmtCounter = 1
                 for tUnk in range(sizeOfMove):
-                    if (tUnk == 4): #Checks if GMT Table ID
-                        gmtIndex = rd.read_int32()
-                        if (gmtIndex != -1):
-                            moveDict[moveName]["Move Data"]["GMT Table ID"] = gmtList[gmtIndex]
-                        else:
+                    stay = rd.pos()
+                    unk = rd.read_float()
+                    if (19 < len(str(unk)) or math.isnan(unk)): #Checks to see if it's a float or invalid
+                        rd.seek(stay)
+                        unk = rd.read_int32()
+                        if (unk != -1): #Checks if not a number
+                            try: #Checks if it's a GMT Table Index
+                                if (tUnk == 4):
+                                    moveDict[moveName]["Move Data"]["GMT Table ID"] = gmtList[unk]
+                                else:
+                                    moveDict[moveName]["Move Data"]["Additonal GMT "+str(gmtCounter)] = gmtList[unk]
+                                    gmtCounter += 1
+                            except: #If not, make it a normal uint
+                                rd.seek(stay)
+                                unk = rd.read_uint32()
+                                moveDict[moveName]["Move Data"]["Unk "+str(tUnk+1)] = unk
+                        else: 
                             moveDict[moveName]["Move Data"]["GMT Table ID"] = ""
-                    else: #If not, label as unk
-                        moveDict[moveName]["Move Data"]["Unk "+str(tUnk+1)] = rd.read_uint32()
+                    else: #If just a float, write it.
+                        moveDict[moveName]["Move Data"]["Unk "+str(tUnk+1)] = unk
             elif (gameTypeInt == 1 or gameTypeInt == 2):
                 for tUnk in range(sizeOfMove):
                     if (tUnk == 4): #Checks if GMT Table ID
@@ -458,21 +489,31 @@ else:
                     #Checks the PropertyID to see if it's a special ID
                     if (propertyIDType == 1): #Unknown Property | ID 1
                         rd.seek(propertiesPointer + moveBlocksProperty)
-                        if (gameTypeInt == 0 or gameTypeInt == 2): #Newer games/Yakuza 4
-                            for unk in range(10):
-                                moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Unk "+str(unk)] = rd.read_uint16()
+                        if (gameTypeInt == 0): #Newer games
+                            moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Voice Que"] = "0x{:04x}".format(rd.read_int16())[2:]#I stole this from Ret
+                            moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Sound Container ID"] = rd.read_int16() 
+                            for unk in range(8):
+                                moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Unk "+str(unk)] = rd.read_int16()
                         elif (gameTypeInt == 1):
                             for unk in range(6):
-                                moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Unk "+str(unk)] = rd.read_uint16()
+                                moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Unk "+str(unk)] = rd.read_int16()
+                        elif (gameTypeInt == 2): #Yakuza 4
+                            for unk in range(10):
+                                moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Unk "+str(unk)] = rd.read_int16()
                         rd.seek(propertiesTablePos)
                     elif (propertyIDType == 2): #Audio Property | ID 2
                         rd.seek(propertiesPointer + moveBlocksProperty)
-                        if (gameTypeInt == 0 or gameTypeInt == 2): #Newer games/Yakuza 4
-                            for unk in range(10):
-                                moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Unk "+str(unk)] = rd.read_uint16() 
+                        if (gameTypeInt == 0): #Newer games/Yakuza 4
+                            moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Voice Que"] = "0x{:04x}".format(rd.read_int16())[2:]#I stole this from Ret
+                            moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Sound Container ID"] = rd.read_int16() 
+                            for unk in range(8):
+                                moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Unk "+str(unk)] = rd.read_int16() 
                         elif (gameTypeInt == 1):
                             for unk in range(6):
-                                moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Unk "+str(unk)] = rd.read_uint16()
+                                moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Unk "+str(unk)] = rd.read_int16()
+                        elif (gameTypeInt == 2): #Yakuza 4
+                            for unk in range(10):
+                                moveDict[moveName]["Move Properties"]["Properties Table"][id]["Audio"]["Unk "+str(unk)] = rd.read_int16()
                         rd.seek(propertiesTablePos)
                     elif (propertyIDType == 5): #Hitbox | ID 5
                         rd.seek(propertiesPointer + moveBlocksProperty)
@@ -490,6 +531,8 @@ else:
                                 moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr][hitboxStr+key] = rd.read_uint16()
                             elif (value == 0):
                                 moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr][key] = 1
+                            elif (value == 116):
+                                moveDict[moveName]["Move Properties"]["Properties Table"][id][hitboxStr][key] = "0x{:04x}".format(rd.read_uint16())[2:]
                         rd.seek(propertiesTablePos)
         export_json(direct, "Move Block Data", moveDict) #Exports Move Table
         print("Move Block Data successfully exported")
@@ -715,14 +758,16 @@ else:
 
             for index2, value in enumerate(moveData[2::]):
                 if (gameTypeInt == 0):
-                    if (index2 == 4):
+                    if (isinstance(value, str)):
                         if (value == ""):
                             wr.write_int32(-1)
                         else:
                             gmtIndex = int(gmtName[value])
                             wr.write_int32(gmtIndex)
-                    else:
+                    elif (isinstance(value, int)):
                         wr.write_uint32(value)
+                    else:
+                        wr.write_float(value)
                 elif (gameTypeInt == 1): #Spaghetti code, go fuck yourself
                     if (index2 == 4):
                         if (value == ""):
@@ -775,16 +820,20 @@ else:
                         pass
                     pointerStart = wr.pos()
                     pointerPosition = pointerStart - moveBlocksProperty
-                    if (id == 1): #Hitbox Audio
-                        for unk in moveIDs:
-                            wr.write_uint16(unk)
-                        idPosition = wr.pos() 
-                        wr.seek(propertiesPointer[index4])
-                        wr.write_uint32(pointerPosition) #Writes how far the pointer is
-                        wr.seek(idPosition)
-                    elif (id == 2): #Audio
-                        for unk in moveIDs:
-                            wr.write_uint16(unk)
+                    if (id == 2 or id == 1): #Audio and Hitbox Audio
+                        for index, unk in enumerate(moveIDs):
+                            if (gameTypeInt == 0):
+                                if (index == 0):
+                                    if (unk == "-001"):
+                                        wr.write_int16(-1)
+                                        continue
+                                    hex_str = unk
+                                    hex_int = int(hex_str, 16)
+                                    wr.write_int16(hex_int)
+                                else:
+                                    wr.write_int16(unk)
+                            else:
+                                wr.write_int16(unk)
                         idPosition = wr.pos()
                         wr.seek(propertiesPointer[index4])
                         wr.write_uint32(pointerPosition)
@@ -802,6 +851,10 @@ else:
                                 wr.write_uint16(moveIDs[indexHit])
                             elif (value == 0):
                                 continue
+                            elif (value == 116):
+                                hex_str = moveIDs[indexHit]
+                                hex_int = int(hex_str, 16)
+                                wr.write_uint16(hex_int)
                         idPosition = wr.pos() 
                         wr.seek(propertiesPointer[index4])
                         wr.write_uint32(pointerPosition)
